@@ -10,12 +10,6 @@ export default function VaultDashboard({ onQuickSwitch }) {
   const [ytLoading, setYtLoading] = useState(false);
   const [activeVideoId, setActiveVideoId] = useState(null);
 
-  // Browser state
-  const [urlInput, setUrlInput] = useState('https://lite.duckduckgo.com/lite/');
-  const [frameUrl, setFrameUrl] = useState(
-    '/proxy?url=' + encodeURIComponent('https://lite.duckduckgo.com/lite/')
-  );
-
   async function handleYtSearch(e) {
     e.preventDefault();
     if (!ytQuery.trim()) return;
@@ -28,22 +22,6 @@ export default function VaultDashboard({ onQuickSwitch }) {
       setYtResults([]);
     }
     setYtLoading(false);
-  }
-
-  function handleBrowserGo(e) {
-    e.preventDefault();
-    const raw = urlInput.trim();
-    if (!raw) return;
-
-    // If it looks like a URL, open it; otherwise search via DuckDuckGo Lite
-    const isUrl = /^https?:\/\//i.test(raw) || (raw.includes('.') && !raw.includes(' '));
-    const target = isUrl
-      ? raw.startsWith('http')
-        ? raw
-        : `https://${raw}`
-      : `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(raw)}`;
-
-    setFrameUrl('/proxy?url=' + encodeURIComponent(target));
   }
 
   return (
@@ -122,26 +100,14 @@ export default function VaultDashboard({ onQuickSwitch }) {
         </main>
       )}
 
-      {/* Contained Browser */}
+      {/* Remote Chromium Browser */}
       {activeApp === 'browser' && (
-        <main style={{ ...styles.main, padding: 12 }}>
-          <form onSubmit={handleBrowserGo} style={styles.searchBar}>
-            <Globe size={16} color="#888" />
-            <input
-              type="text"
-              placeholder="Enter URL or search..."
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              style={styles.input}
-            />
-            <button type="submit" style={styles.quickSwitch}>Go</button>
-          </form>
-
+        <main style={{ flex: 1, display: 'flex', padding: 8 }}>
           <div style={styles.browserWrap}>
             <iframe
-              src={frameUrl}
-              title="Contained Browser"
-              style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
+              src="/browser-stream/vnc.html?autoconnect=true&resize=scale&path=browser-stream/websockify"
+              title="Remote Browser"
+              style={{ width: '100%', height: '100%', border: 'none', background: '#000' }}
             />
           </div>
         </main>
@@ -163,5 +129,5 @@ const styles = {
   thumb: { width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' },
   videoTitle: { fontSize: 13, fontWeight: 500, lineHeight: 1.35, marginBottom: 4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' },
   videoMeta: { fontSize: 11, color: '#888' },
-  browserWrap: { flex: 1, minHeight: '78vh', borderRadius: 10, overflow: 'hidden', border: '1px solid #222' },
+  browserWrap: { flex: 1, minHeight: '85vh', borderRadius: 10, overflow: 'hidden', border: '1px solid #222' },
 };
