@@ -19,3 +19,7 @@ primary_region = 'ams'
   memory = '256mb'
   cpu_kind = 'shared'
   cpus = 1
+  
+[build.args]
+  VITE_SUPABASE_URL = "https://eltjtexdcrtwvfydnfjt.supabase.co"
+  VITE_SUPABASE_ANON_KEY = "sb_publishable_bUa7AhP5xOBsMzt_l1D_8g_jiB_yxim"
