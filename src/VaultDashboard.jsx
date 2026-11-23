@@ -1,25 +1,49 @@
 import React, { useState } from 'react';
-import { ArrowLeft, Youtube, Globe } from 'lucide-react';
-
-function extractYouTubeId(input) {
-  const trimmed = input.trim();
-  if (/^[a-zA-Z0-9_-]{11}$/.test(trimmed)) return trimmed;
-  const match = trimmed.match(/(?:v=|\/embed\/|youtu\.be\/|\/shorts\/)([a-zA-Z0-9_-]{11})/);
-  return match ? match[1] : null;
-}
+import { ArrowLeft, Globe, Search, Youtube } from 'lucide-react';
 
 export default function VaultDashboard({ onQuickSwitch }) {
   const [activeApp, setActiveApp] = useState('youtube'); // 'youtube' | 'browser'
-  const [ytInput, setYtInput] = useState('');
-  const [videoId, setVideoId] = useState('dQw4w9WgXcQ'); // Default test video
 
-  function handleLoadVideo(e) {
+  // YouTube state
+  const [ytQuery, setYtQuery] = useState('');
+  const [ytResults, setYtResults] = useState([]);
+  const [ytLoading, setYtLoading] = useState(false);
+  const [activeVideoId, setActiveVideoId] = useState(null);
+
+  // Browser state
+  const [urlInput, setUrlInput] = useState('https://lite.duckduckgo.com/lite/');
+  const [frameUrl, setFrameUrl] = useState(
+    '/proxy?url=' + encodeURIComponent('https://lite.duckduckgo.com/lite/')
+  );
+
+  async function handleYtSearch(e) {
     e.preventDefault();
-    const id = extractYouTubeId(ytInput);
-    if (id) {
-      setVideoId(id);
-      setYtInput('');
+    if (!ytQuery.trim()) return;
+    setYtLoading(true);
+    try {
+      const res = await fetch(`/api/yt/search?q=${encodeURIComponent(ytQuery.trim())}`);
+      const data = await res.json();
+      setYtResults(data.videos || []);
+    } catch {
+      setYtResults([]);
     }
+    setYtLoading(false);
+  }
+
+  function handleBrowserGo(e) {
+    e.preventDefault();
+    const raw = urlInput.trim();
+    if (!raw) return;
+
+    // If it looks like a URL, open it; otherwise search via DuckDuckGo Lite
+    const isUrl = /^https?:\/\//i.test(raw) || (raw.includes('.') && !raw.includes(' '));
+    const target = isUrl
+      ? raw.startsWith('http')
+        ? raw
+        : `https://${raw}`
+      : `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(raw)}`;
+
+    setFrameUrl('/proxy?url=' + encodeURIComponent(target));
   }
 
   return (
@@ -46,40 +70,82 @@ export default function VaultDashboard({ onQuickSwitch }) {
         </div>
       </header>
 
-      {/* Container Body */}
-      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: 16, gap: 16 }}>
-        {activeApp === 'youtube' && (
-          <>
-            <form onSubmit={handleLoadVideo} style={{ display: 'flex', gap: 8, maxWidth: 600 }}>
-              <input
-                type="text"
-                placeholder="Paste YouTube URL or Video ID..."
-                value={ytInput}
-                onChange={(e) => setYtInput(e.target.value)}
-                style={styles.input}
-              />
-              <button type="submit" style={styles.quickSwitch}>Load</button>
-            </form>
+      {/* YouTube Container */}
+      {activeApp === 'youtube' && (
+        <main style={styles.main}>
+          <form onSubmit={handleYtSearch} style={styles.searchBar}>
+            <Search size={16} color="#888" />
+            <input
+              type="text"
+              placeholder="Search YouTube..."
+              value={ytQuery}
+              onChange={(e) => setYtQuery(e.target.value)}
+              style={styles.input}
+            />
+            <button type="submit" style={styles.quickSwitch}>
+              {ytLoading ? '...' : 'Search'}
+            </button>
+          </form>
 
+          {activeVideoId && (
             <div style={styles.playerWrap}>
               <iframe
-                src={`https://www.youtube-nocookie.com/embed/${videoId}?rel=0&modestbranding=1`}
+                src={`https://www.youtube-nocookie.com/embed/${activeVideoId}?autoplay=1&rel=0&modestbranding=1`}
                 title="Player"
                 style={{ width: '100%', height: '100%', border: 'none' }}
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                 allowFullScreen
               />
             </div>
-          </>
-        )}
+          )}
 
-        {activeApp === 'browser' && (
-          <div style={styles.placeholder}>
-            <Globe size={32} color="#555" />
-            <p style={{ color: '#888' }}>Web Proxy Container — wired up in Phase 2.</p>
+          <div style={styles.grid}>
+            {ytResults.map((v) => (
+              <button
+                key={v.id}
+                onClick={() => setActiveVideoId(v.id)}
+                style={{
+                  ...styles.videoCard,
+                  borderColor: activeVideoId === v.id ? '#fff' : '#222',
+                }}
+              >
+                <img src={v.thumbnail} alt="" style={styles.thumb} />
+                <div style={{ padding: 10, textAlign: 'left' }}>
+                  <div style={styles.videoTitle}>{v.title}</div>
+                  <div style={styles.videoMeta}>
+                    {v.author} {v.duration ? `• ${v.duration}` : ''}
+                  </div>
+                </div>
+              </button>
+            ))}
           </div>
-        )}
-      </main>
+        </main>
+      )}
+
+      {/* Contained Browser */}
+      {activeApp === 'browser' && (
+        <main style={{ ...styles.main, padding: 12 }}>
+          <form onSubmit={handleBrowserGo} style={styles.searchBar}>
+            <Globe size={16} color="#888" />
+            <input
+              type="text"
+              placeholder="Enter URL or search..."
+              value={urlInput}
+              onChange={(e) => setUrlInput(e.target.value)}
+              style={styles.input}
+            />
+            <button type="submit" style={styles.quickSwitch}>Go</button>
+          </form>
+
+          <div style={styles.browserWrap}>
+            <iframe
+              src={frameUrl}
+              title="Contained Browser"
+              style={{ width: '100%', height: '100%', border: 'none', background: '#fff' }}
+            />
+          </div>
+        </main>
+      )}
     </div>
   );
 }
@@ -88,7 +154,14 @@ const styles = {
   header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', background: '#0e0e0e', borderBottom: '1px solid #222' },
   quickSwitch: { display: 'flex', alignItems: 'center', gap: 6, background: '#000', color: '#fff', border: '1px solid #333', borderRadius: 999, padding: '6px 14px', cursor: 'pointer', fontSize: 13 },
   tabBtn: { display: 'flex', alignItems: 'center', gap: 6, color: '#fff', border: '1px solid #2a2a2a', borderRadius: 8, padding: '6px 12px', cursor: 'pointer', fontSize: 13 },
-  input: { flex: 1, background: '#141414', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', color: '#fff', outline: 'none' },
-  playerWrap: { flex: 1, minHeight: '70vh', borderRadius: 12, overflow: 'hidden', border: '1px solid #222', background: '#000' },
-  placeholder: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, border: '1px dashed #2a2a2a', borderRadius: 12 },
+  main: { flex: 1, display: 'flex', flexDirection: 'column', padding: 16, gap: 16 },
+  searchBar: { display: 'flex', alignItems: 'center', gap: 8, background: '#141414', border: '1px solid #2a2a2a', borderRadius: 999, padding: '4px 6px 4px 14px', maxWidth: 700, width: '100%' },
+  input: { flex: 1, background: 'transparent', border: 'none', color: '#fff', outline: 'none', fontSize: 14 },
+  playerWrap: { width: '100%', aspectRatio: '16 / 9', maxHeight: '62vh', borderRadius: 12, overflow: 'hidden', border: '1px solid #222', background: '#000' },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(230px, 1fr))', gap: 14 },
+  videoCard: { background: '#111', border: '1px solid #222', borderRadius: 10, overflow: 'hidden', cursor: 'pointer', padding: 0, color: '#fff', display: 'flex', flexDirection: 'column' },
+  thumb: { width: '100%', aspectRatio: '16 / 9', objectFit: 'cover', display: 'block' },
+  videoTitle: { fontSize: 13, fontWeight: 500, lineHeight: 1.35, marginBottom: 4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' },
+  videoMeta: { fontSize: 11, color: '#888' },
+  browserWrap: { flex: 1, minHeight: '78vh', borderRadius: 10, overflow: 'hidden', border: '1px solid #222' },
 };
