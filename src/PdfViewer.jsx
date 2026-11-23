@@ -1,15 +1,31 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as pdfjsLib from 'pdfjs-dist';
-import { MoreVertical, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import pdfWorker from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
+import {
+  ArrowLeft,
+  ChevronLeft,
+  ChevronRight,
+  Maximize2,
+  Minimize2,
+  MoreVertical,
+  Search,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 
-pdfjsLib.GlobalWorkerOptions.workerSrc =
-  'https://unpkg.com/pdfjs-dist@4.7.76/build/pdf.worker.min.mjs';
+// Bundles worker locally with Vite so it never fails on CDN/CORS
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
-export default function PdfViewer({ files, activeFileUrl, onSelectFile, onVerifyCode }) {
+export default function PdfViewer({ file, onBack, onVerifyCode }) {
   const canvasRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
   const [pageNum, setPageNum] = useState(1);
   const [numPages, setNumPages] = useState(0);
+  const [scale, setScale] = useState(1.2);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  const [loadingPdf, setLoadingPdf] = useState(true);
+  const [loadError, setLoadError] = useState('');
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
@@ -21,27 +37,53 @@ export default function PdfViewer({ files, activeFileUrl, onSelectFile, onVerify
   const [modalCode, setModalCode] = useState('');
   const tapTimerRef = useRef(null);
 
+  // Track browser fullscreen state
   useEffect(() => {
-    if (!activeFileUrl) return;
+    const onFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  // Load PDF document
+  useEffect(() => {
+    if (!file?.url) return;
     let cancelled = false;
+    setLoadingPdf(true);
+    setLoadError('');
+    setPdfDoc(null);
 
-    pdfjsLib.getDocument(activeFileUrl).promise.then((doc) => {
-      if (cancelled) return;
-      setPdfDoc(doc);
-      setNumPages(doc.numPages);
-      setPageNum(1);
-      setSearchStatus('');
-    });
+    const loadingTask = pdfjsLib.getDocument({ url: file.url });
+    loadingTask.promise
+      .then((doc) => {
+        if (cancelled) return;
+        setPdfDoc(doc);
+        setNumPages(doc.numPages);
+        setPageNum(1);
+        setSearchStatus('');
+        setLoadingPdf(false);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.error('PDF load error:', err);
+        setLoadError(err?.message || 'Failed to load PDF document.');
+        setLoadingPdf(false);
+      });
 
-    return () => { cancelled = true; };
-  }, [activeFileUrl]);
+    return () => {
+      cancelled = true;
+      loadingTask.destroy();
+    };
+  }, [file?.url]);
 
+  // Render active page
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
     let renderTask;
+    let cancelled = false;
 
     pdfDoc.getPage(pageNum).then((page) => {
-      const viewport = page.getViewport({ scale: 1.35 });
+      if (cancelled || !canvasRef.current) return;
+      const viewport = page.getViewport({ scale });
       const canvas = canvasRef.current;
       const ctx = canvas.getContext('2d');
       canvas.height = viewport.height;
@@ -50,8 +92,19 @@ export default function PdfViewer({ files, activeFileUrl, onSelectFile, onVerify
       renderTask = page.render({ canvasContext: ctx, viewport });
     });
 
-    return () => { if (renderTask) renderTask.cancel(); };
-  }, [pdfDoc, pageNum]);
+    return () => {
+      cancelled = true;
+      if (renderTask) renderTask.cancel();
+    };
+  }, [pdfDoc, pageNum, scale]);
+
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.().catch(() => {});
+    } else {
+      document.exitFullscreen?.().catch(() => {});
+    }
+  }
 
   async function handleSearchSubmit(e) {
     e.preventDefault();
@@ -75,11 +128,11 @@ export default function PdfViewer({ files, activeFileUrl, onSelectFile, onVerify
       const text = textContent.items.map((item) => item.str).join(' ').toLowerCase();
       if (text.includes(target)) {
         setPageNum(i);
-        setSearchStatus(`Found on page ${i}`);
+        setSearchStatus(`Page ${i}`);
         return;
       }
     }
-    setSearchStatus('No matches found');
+    setSearchStatus('No matches');
   }
 
   function handleVersionTap() {
@@ -105,22 +158,18 @@ export default function PdfViewer({ files, activeFileUrl, onSelectFile, onVerify
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
-      {/* Top Toolbar */}
+    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: '#0a0a0a' }}>
+      {/* Viewer Toolbar */}
       <header style={styles.header}>
-        <select
-          value={activeFileUrl || ''}
-          onChange={(e) => onSelectFile(e.target.value)}
-          style={styles.select}
-        >
-          {files.length === 0 && <option>No PDFs in bucket</option>}
-          {files.map((f) => (
-            <option key={f.name} value={f.url}>{f.name}</option>
-          ))}
-        </select>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+          <button onClick={onBack} style={styles.pillBtn}>
+            <ArrowLeft size={15} /> Files
+          </button>
+          <span style={styles.fileTitle} title={file.name}>{file.name}</span>
+        </div>
 
         <form onSubmit={handleSearchSubmit} style={styles.searchForm}>
-          <Search size={16} color="#888" />
+          <Search size={15} color="#888" />
           <input
             type="text"
             placeholder="Find in document..."
@@ -128,34 +177,78 @@ export default function PdfViewer({ files, activeFileUrl, onSelectFile, onVerify
             onChange={(e) => setSearchQuery(e.target.value)}
             style={styles.searchInput}
           />
-          {searchStatus && <span style={{ fontSize: 12, color: '#888' }}>{searchStatus}</span>}
+          {searchStatus && <span style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>{searchStatus}</span>}
         </form>
 
-        <div style={{ position: 'relative' }}>
-          <button onClick={() => setMenuOpen(!menuOpen)} style={styles.iconBtn}>
-            <MoreVertical size={18} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          <button
+            onClick={() => setScale((s) => Math.max(0.6, +(s - 0.2).toFixed(1)))}
+            style={styles.iconBtn}
+            title="Zoom Out"
+          >
+            <ZoomOut size={17} />
+          </button>
+          <span style={{ fontSize: 12, color: '#aaa', minWidth: 40, textAlign: 'center' }}>
+            {Math.round(scale * 100)}%
+          </span>
+          <button
+            onClick={() => setScale((s) => Math.min(2.4, +(s + 0.2).toFixed(1)))}
+            style={styles.iconBtn}
+            title="Zoom In"
+          >
+            <ZoomIn size={17} />
           </button>
 
-          {menuOpen && (
-            <div style={styles.menu}>
-              <div style={styles.menuItem}>Page {pageNum} of {numPages || 1}</div>
-              <div onClick={handleVersionTap} style={{ ...styles.menuItem, cursor: 'pointer', color: '#888' }}>
-                Version 1.4.2
+          <button
+            onClick={toggleFullscreen}
+            style={styles.iconBtn}
+            title={isFullscreen ? 'Minimize' : 'Maximize'}
+          >
+            {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+          </button>
+
+          <div style={{ position: 'relative' }}>
+            <button onClick={() => setMenuOpen(!menuOpen)} style={styles.iconBtn} title="More">
+              <MoreVertical size={17} />
+            </button>
+
+            {menuOpen && (
+              <div style={styles.menu}>
+                <div style={styles.menuItem}>Page {pageNum} of {numPages || 1}</div>
+                <div
+                  onClick={handleVersionTap}
+                  style={{ ...styles.menuItem, cursor: 'pointer', color: '#888' }}
+                >
+                  Version 1.4.2
+                </div>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </header>
 
-      {/* PDF Canvas */}
+      {/* PDF Canvas Area */}
       <main style={styles.main}>
-        <canvas ref={canvasRef} style={{ maxWidth: '100%', height: 'auto', background: '#fff' }} />
-        {numPages > 1 && (
+        {loadingPdf && <div style={styles.statusText}>Opening document...</div>}
+        {loadError && <div style={{ ...styles.statusText, color: '#ff6b6b' }}>{loadError}</div>}
+
+        <canvas
+          ref={canvasRef}
+          style={{
+            display: loadingPdf || loadError ? 'none' : 'block',
+            maxWidth: '100%',
+            height: 'auto',
+            background: '#fff',
+            boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
+          }}
+        />
+
+        {!loadingPdf && !loadError && numPages > 1 && (
           <div style={styles.pager}>
             <button disabled={pageNum <= 1} onClick={() => setPageNum((p) => p - 1)} style={styles.pillBtn}>
               <ChevronLeft size={16} /> Prev
             </button>
-            <span>{pageNum} / {numPages}</span>
+            <span style={{ fontSize: 13, color: '#ccc' }}>{pageNum} / {numPages}</span>
             <button disabled={pageNum >= numPages} onClick={() => setPageNum((p) => p + 1)} style={styles.pillBtn}>
               Next <ChevronRight size={16} />
             </button>
@@ -184,16 +277,17 @@ export default function PdfViewer({ files, activeFileUrl, onSelectFile, onVerify
 }
 
 const styles = {
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 16px', background: '#111', borderBottom: '1px solid #222' },
-  select: { background: '#1a1a1a', color: '#fff', border: '1px solid #333', borderRadius: 6, padding: '6px 10px', maxWidth: 200 },
-  searchForm: { display: 'flex', alignItems: 'center', gap: 8, background: '#1a1a1a', border: '1px solid #333', borderRadius: 999, padding: '6px 12px', flex: 1, maxWidth: 400 },
-  searchInput: { background: 'transparent', border: 'none', color: '#fff', outline: 'none', width: '100%' },
-  iconBtn: { background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 6 },
-  menu: { position: 'absolute', right: 0, top: 38, background: '#161616', border: '1px solid #2a2a2a', borderRadius: 8, minWidth: 160, zIndex: 20, overflow: 'hidden' },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '10px 16px', background: '#111', borderBottom: '1px solid #222', flexWrap: 'wrap' },
+  fileTitle: { fontSize: 13, color: '#ccc', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 },
+  searchForm: { display: 'flex', alignItems: 'center', gap: 8, background: '#1a1a1a', border: '1px solid #333', borderRadius: 999, padding: '6px 12px', flex: 1, minWidth: 180, maxWidth: 380 },
+  searchInput: { background: 'transparent', border: 'none', color: '#fff', outline: 'none', width: '100%', fontSize: 13 },
+  iconBtn: { background: 'transparent', border: 'none', color: '#e5e5e5', cursor: 'pointer', padding: 6, borderRadius: 6, display: 'flex', alignItems: 'center' },
+  menu: { position: 'absolute', right: 0, top: 36, background: '#161616', border: '1px solid #2a2a2a', borderRadius: 8, minWidth: 160, zIndex: 20, overflow: 'hidden' },
   menuItem: { padding: '10px 14px', fontSize: 13, borderBottom: '1px solid #222', userSelect: 'none' },
-  main: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 20, gap: 16 },
+  main: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 20, gap: 16, overflow: 'auto' },
+  statusText: { marginTop: 60, fontSize: 14, color: '#888' },
   pager: { display: 'flex', alignItems: 'center', gap: 16 },
-  pillBtn: { display: 'flex', alignItems: 'center', gap: 4, background: '#000', color: '#fff', border: '1px solid #333', borderRadius: 999, padding: '6px 14px', cursor: 'pointer' },
+  pillBtn: { display: 'flex', alignItems: 'center', gap: 5, background: '#000', color: '#fff', border: '1px solid #333', borderRadius: 999, padding: '6px 14px', cursor: 'pointer', fontSize: 13 },
   modalBackdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
   modal: { background: '#111', border: '1px solid #333', borderRadius: 12, padding: 20, display: 'flex', gap: 10 },
   modalInput: { background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', color: '#fff', outline: 'none' },
