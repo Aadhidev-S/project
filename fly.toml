@@ -16,9 +16,9 @@ primary_region = 'ams'
   processes = ['app']
 
 [[vm]]
-  memory = '256mb'
+  memory = '2gb'
   cpu_kind = 'shared'
-  cpus = 1
+  cpus = 2
   
 [build.args]
   VITE_SUPABASE_URL = "https://eltjtexdcrtwvfydnfjt.supabase.co"
