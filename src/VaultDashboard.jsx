@@ -47,7 +47,7 @@ export default function VaultDashboard({ onQuickSwitch }) {
   const [proxyError, setProxyError] = useState('');
   const [frameSrc, setFrameSrc] = useState('');
 
-  // Initialize Ultraviolet Service Worker + Wisp transport when Browser tab opens
+  // Initialize Ultraviolet Service Worker + Libcurl/Wisp transport when Browser tab opens
   useEffect(() => {
     if (activeApp !== 'browser' || proxyReady) return;
     let cancelled = false;
@@ -72,8 +72,8 @@ export default function VaultDashboard({ onQuickSwitch }) {
           '/wisp/';
 
         const connection = new window.BareMux.BareMuxConnection('/baremux/worker.js');
-        if ((await connection.getTransport()) !== '/epoxy/index.mjs') {
-          await connection.setTransport('/epoxy/index.mjs', [{ wisp: wispUrl }]);
+        if ((await connection.getTransport()) !== '/libcurl/index.mjs') {
+          await connection.setTransport('/libcurl/index.mjs', [{ websocket: wispUrl }]);
         }
 
         if (cancelled) return;
