@@ -4,7 +4,7 @@
 #
 
 app = 'brilliantpala'
-primary_region = 'ams'
+primary_region = 'lhr'
 
 [build]
 [http_service]
