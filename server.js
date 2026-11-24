@@ -3,7 +3,7 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { uvPath } from '@titaniumnetwork-dev/ultraviolet';
-import { epoxyPath } from '@mercuryworkshop/epoxy-transport';
+import { libcurlPath } from '@mercuryworkshop/libcurl-transport';
 import { baremuxPath } from '@mercuryworkshop/bare-mux/node';
 import wisp from 'wisp-server-node';
 import yts from 'yt-search';
@@ -53,9 +53,9 @@ app.get('/api/yt/search', async (req, res) => {
 // 2. Serve built React app + public/ FIRST (so public/uv/uv.config.js overrides default)
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// 3. Serve Ultraviolet, Epoxy, and Bare-Mux static bundles
+// 3. Serve Ultraviolet, Libcurl, and Bare-Mux static bundles
 app.use('/uv/', express.static(uvPath));
-app.use('/epoxy/', express.static(epoxyPath));
+app.use('/libcurl/', express.static(libcurlPath));
 app.use('/baremux/', express.static(baremuxPath));
 
 // 4. Route Wisp WebSocket connections
