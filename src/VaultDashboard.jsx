@@ -17,6 +17,18 @@ function buildTargetUrl(rawInput) {
   return `https://duckduckgo.com/?q=${encodeURIComponent(raw)}`;
 }
 
+function waitForSwActivation(reg) {
+  return new Promise((resolve, reject) => {
+    if (reg.active) return resolve();
+    const sw = reg.installing || reg.waiting;
+    if (!sw) return resolve();
+    sw.addEventListener('statechange', () => {
+      if (sw.state === 'activated') resolve();
+      if (sw.state === 'redundant') reject(new Error('Service worker failed to activate.'));
+    });
+  });
+}
+
 export default function VaultDashboard({ onQuickSwitch }) {
   const [activeApp, setActiveApp] = useState('youtube'); // 'youtube' | 'browser'
 
@@ -45,9 +57,14 @@ export default function VaultDashboard({ onQuickSwitch }) {
         if (!('serviceWorker' in navigator)) {
           throw new Error('Service workers require HTTPS.');
         }
+        if (!window.BareMux || !window.__uv$config) {
+          throw new Error('Proxy scripts failed to load. Hard-refresh the page.');
+        }
 
-        await navigator.serviceWorker.register('/sw.js', { scope: '/uv/service/' });
-        await navigator.serviceWorker.ready;
+        const reg = await navigator.serviceWorker.register('/sw.js', {
+          scope: '/uv/service/',
+        });
+        await waitForSwActivation(reg);
 
         const wispUrl =
           (window.location.protocol === 'https:' ? 'wss://' : 'ws://') +
@@ -61,7 +78,9 @@ export default function VaultDashboard({ onQuickSwitch }) {
 
         if (cancelled) return;
         setProxyReady(true);
-        const startUrl = window.__uv$config.prefix + window.__uv$config.encodeUrl('https://duckduckgo.com');
+        const startUrl =
+          window.__uv$config.prefix +
+          window.__uv$config.encodeUrl('https://duckduckgo.com');
         setFrameSrc(startUrl);
       } catch (err) {
         if (!cancelled) setProxyError(err?.message || 'Failed to start browser proxy.');
@@ -69,7 +88,9 @@ export default function VaultDashboard({ onQuickSwitch }) {
     }
 
     initProxy();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [activeApp, proxyReady]);
 
   async function runYtSearch(queryText, filterType = ytFilter) {
