@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   ChevronLeft,
@@ -9,19 +9,68 @@ import {
   Youtube,
 } from 'lucide-react';
 
+function buildTargetUrl(rawInput) {
+  const raw = rawInput.trim();
+  if (!raw) return 'https://duckduckgo.com';
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (raw.includes('.') && !raw.includes(' ')) return `https://${raw}`;
+  return `https://duckduckgo.com/?q=${encodeURIComponent(raw)}`;
+}
+
 export default function VaultDashboard({ onQuickSwitch }) {
   const [activeApp, setActiveApp] = useState('youtube'); // 'youtube' | 'browser'
 
   // YouTube state
   const [ytQuery, setYtQuery] = useState('');
-  const [ytFilter, setYtFilter] = useState('all'); // 'all' | 'shorts' | 'channels'
+  const [ytFilter, setYtFilter] = useState('all');
   const [ytVideos, setYtVideos] = useState([]);
   const [ytChannels, setYtChannels] = useState([]);
   const [ytLoading, setYtLoading] = useState(false);
-  const [activeVideo, setActiveVideo] = useState(null); // { id, isShort }
+  const [activeVideo, setActiveVideo] = useState(null);
 
-  // Browser state
-  const [navInput, setNavInput] = useState('');
+  // Ultraviolet Browser state
+  const iframeRef = useRef(null);
+  const [navInput, setNavInput] = useState('https://duckduckgo.com');
+  const [proxyReady, setProxyReady] = useState(false);
+  const [proxyError, setProxyError] = useState('');
+  const [frameSrc, setFrameSrc] = useState('');
+
+  // Initialize Ultraviolet Service Worker + Wisp transport when Browser tab opens
+  useEffect(() => {
+    if (activeApp !== 'browser' || proxyReady) return;
+    let cancelled = false;
+
+    async function initProxy() {
+      try {
+        if (!('serviceWorker' in navigator)) {
+          throw new Error('Service workers require HTTPS.');
+        }
+
+        await navigator.serviceWorker.register('/sw.js', { scope: '/uv/service/' });
+        await navigator.serviceWorker.ready;
+
+        const wispUrl =
+          (window.location.protocol === 'https:' ? 'wss://' : 'ws://') +
+          window.location.host +
+          '/wisp/';
+
+        const connection = new window.BareMux.BareMuxConnection('/baremux/worker.js');
+        if ((await connection.getTransport()) !== '/epoxy/index.mjs') {
+          await connection.setTransport('/epoxy/index.mjs', [{ wisp: wispUrl }]);
+        }
+
+        if (cancelled) return;
+        setProxyReady(true);
+        const startUrl = window.__uv$config.prefix + window.__uv$config.encodeUrl('https://duckduckgo.com');
+        setFrameSrc(startUrl);
+      } catch (err) {
+        if (!cancelled) setProxyError(err?.message || 'Failed to start browser proxy.');
+      }
+    }
+
+    initProxy();
+    return () => { cancelled = true; };
+  }, [activeApp, proxyReady]);
 
   async function runYtSearch(queryText, filterType = ytFilter) {
     if (!queryText.trim()) return;
@@ -50,19 +99,24 @@ export default function VaultDashboard({ onQuickSwitch }) {
     if (ytQuery.trim()) runYtSearch(ytQuery, nextFilter);
   }
 
-  async function sendBrowserAction(type, value = '') {
-    await fetch('/api/browser/action', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, value }),
-    }).catch(() => {});
-  }
-
   function handleBrowserGo(e) {
     e.preventDefault();
-    if (!navInput.trim()) return;
-    sendBrowserAction('goto', navInput.trim());
-    setNavInput('');
+    if (!proxyReady || !window.__uv$config) return;
+    const target = buildTargetUrl(navInput);
+    const encoded = window.__uv$config.prefix + window.__uv$config.encodeUrl(target);
+    setFrameSrc(encoded);
+  }
+
+  function handleNavHistory(action) {
+    try {
+      const win = iframeRef.current?.contentWindow;
+      if (!win) return;
+      if (action === 'back') win.history.back();
+      if (action === 'forward') win.history.forward();
+      if (action === 'reload') win.location.reload();
+    } catch {
+      // Ignore cross-origin frame exceptions
+    }
   }
 
   return (
@@ -106,7 +160,6 @@ export default function VaultDashboard({ onQuickSwitch }) {
             </button>
           </form>
 
-          {/* Filter Pills */}
           <div style={{ display: 'flex', gap: 8 }}>
             {['all', 'shorts', 'channels'].map((f) => (
               <button
@@ -123,15 +176,8 @@ export default function VaultDashboard({ onQuickSwitch }) {
             ))}
           </div>
 
-          {/* Video / Short Player */}
           {activeVideo && (
-            <div
-              style={
-                activeVideo.isShort
-                  ? styles.shortPlayerWrap
-                  : styles.playerWrap
-              }
-            >
+            <div style={activeVideo.isShort ? styles.shortPlayerWrap : styles.playerWrap}>
               <iframe
                 src={`https://www.youtube-nocookie.com/embed/${activeVideo.id}?autoplay=1&rel=0&modestbranding=1`}
                 title="Player"
@@ -142,7 +188,6 @@ export default function VaultDashboard({ onQuickSwitch }) {
             </div>
           )}
 
-          {/* Channels Row */}
           {ytChannels.length > 0 && (ytFilter === 'all' || ytFilter === 'channels') && (
             <div style={styles.channelRow}>
               {ytChannels.map((c) => (
@@ -165,7 +210,6 @@ export default function VaultDashboard({ onQuickSwitch }) {
             </div>
           )}
 
-          {/* Videos / Shorts Grid */}
           {ytFilter !== 'channels' && (
             <div style={styles.grid}>
               {ytVideos.map((v) => (
@@ -194,25 +238,24 @@ export default function VaultDashboard({ onQuickSwitch }) {
         </main>
       )}
 
-      {/* Mobile-Friendly Remote Chromium Browser */}
+      {/* Mobile-First Ultraviolet Browser */}
       {activeApp === 'browser' && (
         <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-          {/* Native Navigation Bar */}
           <div style={styles.browserNav}>
-            <button onClick={() => sendBrowserAction('back')} style={styles.navIcon} title="Back">
+            <button onClick={() => handleNavHistory('back')} style={styles.navIcon} title="Back">
               <ChevronLeft size={18} />
             </button>
-            <button onClick={() => sendBrowserAction('forward')} style={styles.navIcon} title="Forward">
+            <button onClick={() => handleNavHistory('forward')} style={styles.navIcon} title="Forward">
               <ChevronRight size={18} />
             </button>
-            <button onClick={() => sendBrowserAction('reload')} style={styles.navIcon} title="Reload">
+            <button onClick={() => handleNavHistory('reload')} style={styles.navIcon} title="Reload">
               <RotateCw size={16} />
             </button>
 
             <form onSubmit={handleBrowserGo} style={styles.navForm}>
               <input
                 type="text"
-                placeholder="Search Google or enter URL..."
+                placeholder="Search or enter URL..."
                 value={navInput}
                 onChange={(e) => setNavInput(e.target.value)}
                 style={styles.input}
@@ -221,13 +264,19 @@ export default function VaultDashboard({ onQuickSwitch }) {
             </form>
           </div>
 
-          {/* Auto-Resizing noVNC Lite Viewport */}
-          <div style={{ flex: 1, background: '#000', overflow: 'hidden' }}>
-            <iframe
-              src="/browser-stream/vnc_lite.html?autoconnect=true&resize=remote&path=browser-stream/websockify"
-              title="Remote Browser"
-              style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-            />
+          <div style={{ flex: 1, background: '#0a0a0a', position: 'relative', overflow: 'hidden' }}>
+            {proxyError ? (
+              <div style={styles.statusMsg}>{proxyError}</div>
+            ) : !proxyReady ? (
+              <div style={styles.statusMsg}>Starting private browser...</div>
+            ) : (
+              <iframe
+                ref={iframeRef}
+                src={frameSrc}
+                title="Private Browser"
+                style={{ width: '100%', height: '100%', border: 'none', background: '#fff', display: 'block' }}
+              />
+            )}
           </div>
         </main>
       )}
@@ -259,4 +308,5 @@ const styles = {
   navIcon: { background: '#1a1a1a', border: '1px solid #2a2a2a', color: '#fff', borderRadius: 8, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 },
   navForm: { flex: 1, display: 'flex', alignItems: 'center', gap: 6, background: '#1a1a1a', border: '1px solid #2a2a2a', borderRadius: 999, padding: '3px 4px 3px 12px', minWidth: 0 },
   navGo: { background: '#000', color: '#fff', border: '1px solid #333', borderRadius: 999, padding: '4px 12px', fontSize: 12, cursor: 'pointer', flexShrink: 0 },
+  statusMsg: { height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#888', fontSize: 14, padding: 20, textAlign: 'center' },
 };
