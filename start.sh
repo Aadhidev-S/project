@@ -1,15 +1,15 @@
 #!/bin/sh
 set -e
 
-# 1. Start virtual screen
-Xvfb :99 -screen 0 1280x720x24 &
+# 1. Start TigerVNC with dynamic resize support
+Xtigervnc :99 -geometry 1280x720 -depth 24 -SecurityTypes None -rfbport 5900 -AlwaysShared &
 export DISPLAY=:99
 sleep 1
 
 # 2. Lightweight window manager
 fluxbox &
 
-# 3. Auto-restarting Incognito Chromium
+# 3. Auto-restarting Incognito Chromium (maximized to match dynamic screen size)
 (
   while true; do
     chromium \
@@ -19,16 +19,14 @@ fluxbox &
       --incognito \
       --no-first-run \
       --disable-infobars \
-      --window-size=1280,720 \
-      --window-position=0,0 \
+      --start-maximized \
       https://www.google.com
     sleep 1
   done
 ) &
 
-# 4. VNC + WebSocket bridge (internal port 6080)
-x11vnc -display :99 -forever -shared -nopw -rfbport 5900 -quiet &
+# 4. WebSocket bridge for noVNC
 websockify --web=/usr/share/novnc 6080 localhost:5900 &
 
-# 5. Start Express + React app on port 8080
+# 5. Start Express + React app
 exec node server.js
