@@ -1,14 +1,13 @@
 FROM node:20-bookworm-slim
 WORKDIR /app
 
-# Install Chromium + virtual display + noVNC
 RUN apt-get update && apt-get install -y --no-install-recommends \
     chromium \
-    xvfb \
+    tigervnc-standalone-server \
     fluxbox \
-    x11vnc \
     novnc \
     websockify \
+    xdotool \
     fonts-liberation \
     fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
