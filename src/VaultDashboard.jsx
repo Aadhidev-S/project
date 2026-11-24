@@ -11,10 +11,22 @@ import {
 
 function buildTargetUrl(rawInput) {
   const raw = rawInput.trim();
-  if (!raw) return 'https://duckduckgo.com';
-  if (/^https?:\/\//i.test(raw)) return raw;
-  if (raw.includes('.') && !raw.includes(' ')) return `https://${raw}`;
-  return `https://duckduckgo.com/?q=${encodeURIComponent(raw)}`;
+  if (!raw) return 'https://duckduckgo.com/?kl=us-en';
+
+  if (/^https?:\/\//i.test(raw) || (raw.includes('.') && !raw.includes(' '))) {
+    const fullUrl = raw.startsWith('http') ? raw : `https://${raw}`;
+    try {
+      const u = new URL(fullUrl);
+      if (u.hostname.includes('google.') && !u.searchParams.has('hl')) {
+        u.searchParams.set('hl', 'en');
+      }
+      return u.toString();
+    } catch {
+      return fullUrl;
+    }
+  }
+
+  return `https://duckduckgo.com/?q=${encodeURIComponent(raw)}&kl=us-en`;
 }
 
 function waitForSwActivation(reg) {
