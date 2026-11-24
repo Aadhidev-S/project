@@ -58,7 +58,21 @@ app.use('/uv/', express.static(uvPath));
 app.use('/libcurl/', express.static(libcurlPath));
 app.use('/baremux/', express.static(baremuxPath));
 
-// 4. Route Wisp WebSocket connections
+// 4. Prevent /uv/service/* from ever falling back to the Documents React app
+app.all('/uv/service/*', (_req, res) => {
+  res.status(503).send(`
+    <html>
+      <body style="background:#0a0a0a;color:#ccc;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center;">
+        <div>
+          <p>Proxy worker is waking up...</p>
+          <script>setTimeout(() => location.reload(), 800);</script>
+        </div>
+      </body>
+    </html>
+  `);
+});
+
+// 5. Route Wisp WebSocket connections
 server.on('upgrade', (req, socket, head) => {
   if (req.url.endsWith('/wisp/')) {
     wisp.routeRequest(req, socket, head);
@@ -67,7 +81,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// 5. Fallback to React app
+// 6. Fallback to React app
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
