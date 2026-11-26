@@ -21,39 +21,64 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
-// 1. Private PDF List (proxied from private Supabase bucket)
-app.get('/api/docs', async (_req, res) => {
-  try {
-    const { data, error } = await supabase.storage.from('documents').list();
-    if (error || !data) return res.status(500).json({ files: [] });
+function sanitizePath(rawPath) {
+  const cleaned = (rawPath || '').toString().replace(/^\/+|\/+$/g, '');
+  if (cleaned.includes('..')) return null;
+  return cleaned;
+}
 
-    const files = data
-      .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-      .map((f) => ({
-        name: f.name,
-        size: f.metadata?.size || 0,
-        updatedAt: f.updated_at ? new Date(f.updated_at).toLocaleDateString() : '',
-        url: `/api/docs/${encodeURIComponent(f.name)}`,
-      }));
-
-    res.json({ files });
-  } catch (err) {
-    console.error('Docs list error:', err);
-    res.status(500).json({ files: [] });
-  }
-});
-
-// 2. Private PDF Stream (browser never sees a Supabase URL)
-app.get('/api/docs/:name', async (req, res) => {
-  const fileName = req.params.name;
-  if (!fileName || fileName.includes('..') || fileName.includes('/')) {
-    return res.status(400).send('Invalid file name');
+// 1. Private Folder & PDF List (supports nested folders via ?path=)
+app.get('/api/docs', async (req, res) => {
+  const folderPath = sanitizePath(req.query.path);
+  if (folderPath === null) {
+    return res.status(400).json({ folders: [], files: [] });
   }
 
   try {
     const { data, error } = await supabase.storage
       .from('documents')
-      .download(fileName);
+      .list(folderPath, { sortBy: { column: 'name', order: 'asc' } });
+
+    if (error || !data) {
+      return res.status(500).json({ folders: [], files: [] });
+    }
+
+    const folders = data
+      .filter((item) => !item.id && item.name !== '.emptyFolderPlaceholder')
+      .map((item) => ({
+        name: item.name,
+        path: folderPath ? `${folderPath}/${item.name}` : item.name,
+      }));
+
+    const files = data
+      .filter((item) => item.id && item.name.toLowerCase().endsWith('.pdf'))
+      .map((item) => {
+        const fullPath = folderPath ? `${folderPath}/${item.name}` : item.name;
+        return {
+          name: item.name,
+          path: fullPath,
+          size: item.metadata?.size || 0,
+          updatedAt: item.updated_at ? new Date(item.updated_at).toLocaleDateString() : '',
+          url: `/api/docs/file?path=${encodeURIComponent(fullPath)}`,
+        };
+      });
+
+    res.json({ folders, files });
+  } catch (err) {
+    console.error('Docs list error:', err);
+    res.status(500).json({ folders: [], files: [] });
+  }
+});
+
+// 2. Private PDF Stream (supports nested folder paths)
+app.get('/api/docs/file', async (req, res) => {
+  const filePath = sanitizePath(req.query.path);
+  if (!filePath) return res.status(400).send('Invalid file path');
+
+  try {
+    const { data, error } = await supabase.storage
+      .from('documents')
+      .download(filePath);
 
     if (error || !data) return res.status(404).send('Document not found');
 
