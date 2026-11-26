@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { FileText, FolderOpen } from 'lucide-react';
-import { supabase } from './supabase';
 import PdfViewer from './PdfViewer';
 import VaultDashboard from './VaultDashboard';
 
@@ -20,17 +19,12 @@ export default function App() {
   useEffect(() => {
     async function loadDocs() {
       setLoading(true);
-      const { data, error } = await supabase.storage.from('documents').list();
-      if (!error && data) {
-        const pdfs = data
-          .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-          .map((f) => ({
-            name: f.name,
-            size: f.metadata?.size || 0,
-            updatedAt: f.updated_at ? new Date(f.updated_at).toLocaleDateString() : '',
-            url: supabase.storage.from('documents').getPublicUrl(f.name).data.publicUrl,
-          }));
-        setFiles(pdfs);
+      try {
+        const res = await fetch('/api/docs');
+        const data = await res.json();
+        setFiles(data.files || []);
+      } catch {
+        setFiles([]);
       }
       setLoading(false);
     }
@@ -39,12 +33,19 @@ export default function App() {
 
   async function checkSecretCode(input) {
     if (!input.trim()) return false;
-    const { data, error } = await supabase.rpc('verify_vault_code', {
-      input_code: input.trim(),
-    });
-    if (!error && data === true) {
-      setView('vault');
-      return true;
+    try {
+      const res = await fetch('/api/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: input.trim() }),
+      });
+      const data = await res.json();
+      if (data.ok === true) {
+        setView('vault');
+        return true;
+      }
+    } catch {
+      // Ignore network errors
     }
     return false;
   }
