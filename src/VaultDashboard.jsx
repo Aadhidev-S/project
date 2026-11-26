@@ -9,10 +9,13 @@ import {
   Youtube,
 } from 'lucide-react';
 
-function buildTargetUrl(rawInput) {
+function buildTargetUrl(rawInput, useLite = false) {
   const raw = rawInput.trim();
-  if (!raw) return 'https://duckduckgo.com/?kl=us-en';
+  const defaultHome = useLite
+    ? 'https://lite.duckduckgo.com/lite/'
+    : 'https://duckduckgo.com/?kl=us-en';
 
+  if (!raw) return defaultHome;
   if (/^https?:\/\//i.test(raw) || (raw.includes('.') && !raw.includes(' '))) {
     const fullUrl = raw.startsWith('http') ? raw : `https://${raw}`;
     try {
@@ -26,7 +29,9 @@ function buildTargetUrl(rawInput) {
     }
   }
 
-  return `https://duckduckgo.com/?q=${encodeURIComponent(raw)}&kl=us-en`;
+  return useLite
+    ? `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(raw)}`
+    : `https://duckduckgo.com/?q=${encodeURIComponent(raw)}&kl=us-en`;
 }
 
 function waitForSwActivation(reg) {
@@ -52,19 +57,28 @@ export default function VaultDashboard({ onQuickSwitch }) {
   const [ytLoading, setYtLoading] = useState(false);
   const [activeVideo, setActiveVideo] = useState(null);
 
-  // Ultraviolet Browser state
+  // Browser state
   const iframeRef = useRef(null);
   const [navInput, setNavInput] = useState('https://duckduckgo.com');
-  const [proxyReady, setProxyReady] = useState(false);
+  const [proxyMode, setProxyMode] = useState('init'); // 'init' | 'uv' | 'fallback'
   const [proxyError, setProxyError] = useState('');
   const [frameSrc, setFrameSrc] = useState('');
 
-  // Initialize Ultraviolet Service Worker + Libcurl/Wisp transport when Browser tab opens
+  // Initialize Ultraviolet (or fallback if SharedWorker is unsupported)
   useEffect(() => {
-    if (activeApp !== 'browser' || proxyReady) return;
+    if (activeApp !== 'browser' || proxyMode !== 'init') return;
     let cancelled = false;
 
     async function initProxy() {
+      // Fallback for older Android Chrome / WebView without SharedWorker
+      if (typeof SharedWorker === 'undefined') {
+        if (cancelled) return;
+        setProxyMode('fallback');
+        setNavInput('https://lite.duckduckgo.com/lite/');
+        setFrameSrc('/proxy?url=' + encodeURIComponent('https://lite.duckduckgo.com/lite/'));
+        return;
+      }
+
       try {
         if (!('serviceWorker' in navigator)) {
           throw new Error('Service workers require HTTPS.');
@@ -89,10 +103,10 @@ export default function VaultDashboard({ onQuickSwitch }) {
         }
 
         if (cancelled) return;
-        setProxyReady(true);
+        setProxyMode('uv');
         const startUrl =
           window.__uv$config.prefix +
-          window.__uv$config.encodeUrl('https://duckduckgo.com');
+          window.__uv$config.encodeUrl('https://duckduckgo.com/?kl=us-en');
         setFrameSrc(startUrl);
       } catch (err) {
         if (!cancelled) setProxyError(err?.message || 'Failed to start browser proxy.');
@@ -103,7 +117,7 @@ export default function VaultDashboard({ onQuickSwitch }) {
     return () => {
       cancelled = true;
     };
-  }, [activeApp, proxyReady]);
+  }, [activeApp, proxyMode]);
 
   async function runYtSearch(queryText, filterType = ytFilter) {
     if (!queryText.trim()) return;
@@ -134,10 +148,16 @@ export default function VaultDashboard({ onQuickSwitch }) {
 
   function handleBrowserGo(e) {
     e.preventDefault();
-    if (!proxyReady || !window.__uv$config) return;
-    const target = buildTargetUrl(navInput);
-    const encoded = window.__uv$config.prefix + window.__uv$config.encodeUrl(target);
-    setFrameSrc(encoded);
+    if (proxyMode === 'fallback') {
+      const target = buildTargetUrl(navInput, true);
+      setFrameSrc('/proxy?url=' + encodeURIComponent(target));
+      return;
+    }
+    if (proxyMode === 'uv' && window.__uv$config) {
+      const target = buildTargetUrl(navInput, false);
+      const encoded = window.__uv$config.prefix + window.__uv$config.encodeUrl(target);
+      setFrameSrc(encoded);
+    }
   }
 
   function handleNavHistory(action) {
@@ -271,7 +291,7 @@ export default function VaultDashboard({ onQuickSwitch }) {
         </main>
       )}
 
-      {/* Mobile-First Ultraviolet Browser */}
+      {/* Mobile-First Browser (Ultraviolet + Automatic Fallback) */}
       {activeApp === 'browser' && (
         <main style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={styles.browserNav}>
@@ -300,7 +320,7 @@ export default function VaultDashboard({ onQuickSwitch }) {
           <div style={{ flex: 1, background: '#0a0a0a', position: 'relative', overflow: 'hidden' }}>
             {proxyError ? (
               <div style={styles.statusMsg}>{proxyError}</div>
-            ) : !proxyReady ? (
+            ) : proxyMode === 'init' ? (
               <div style={styles.statusMsg}>Starting private browser...</div>
             ) : (
               <iframe
