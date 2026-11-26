@@ -11,6 +11,28 @@
     <script src="/baremux/index.js"></script>
     <script src="/uv/uv.bundle.js"></script>
     <script src="/uv/uv.config.js"></script>
+    <script>
+      // Catch any search or relative link that escapes /uv/service/ inside the Browser iframe
+      if (window.self !== window.top && window.__uv$config) {
+        const params = new URLSearchParams(window.location.search);
+        const q = params.get('q');
+        if (q) {
+          const target = 'https://duckduckgo.com/?q=' + encodeURIComponent(q) + '&kl=us-en';
+          window.location.replace(
+            window.__uv$config.prefix + window.__uv$config.encodeUrl(target)
+          );
+        } else if (document.referrer.includes(window.__uv$config.prefix)) {
+          try {
+            const encodedRef = document.referrer.split(window.__uv$config.prefix)[1];
+            const refOrigin = new URL(window.__uv$config.decodeUrl(encodedRef)).origin;
+            const target = refOrigin + window.location.pathname + window.location.search + window.location.hash;
+            window.location.replace(
+              window.__uv$config.prefix + window.__uv$config.encodeUrl(target)
+            );
+          } catch {}
+        }
+      }
+    </script>
   </head>
   <body>
     <div id="root"></div>
