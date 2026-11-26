@@ -50,15 +50,66 @@ app.get('/api/yt/search', async (req, res) => {
   }
 });
 
-// 2. Serve built React app + public/ FIRST (so public/uv/uv.config.js overrides default)
+// 2. Fallback Server Proxy (for older Android browsers without SharedWorker)
+app.get('/proxy', async (req, res) => {
+  const target = (req.query.url || '').toString().trim();
+  if (!target) return res.status(400).send('Missing url');
+
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(target.startsWith('http') ? target : `https://${target}`);
+  } catch {
+    return res.status(400).send('Invalid URL');
+  }
+
+  try {
+    const upstream = await fetch(parsedUrl.toString(), {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+      redirect: 'follow',
+    });
+
+    const contentType = upstream.headers.get('content-type') || 'text/html';
+    res.setHeader('Content-Type', contentType);
+
+    if (contentType.includes('text/html')) {
+      let html = await upstream.text();
+      const baseTag = `<base href="${parsedUrl.origin}${parsedUrl.pathname}">`;
+      const navInterceptor = `
+        <script>
+          document.addEventListener('click', function(e) {
+            const a = e.target.closest('a');
+            if (a && a.href && a.href.startsWith('http')) {
+              e.preventDefault();
+              window.location.href = '/proxy?url=' + encodeURIComponent(a.href);
+            }
+          }, true);
+        </script>
+      `;
+      html = html.includes('<head>')
+        ? html.replace('<head>', `<head>${baseTag}${navInterceptor}`)
+        : `${baseTag}${navInterceptor}${html}`;
+      return res.send(html);
+    }
+
+    res.send(Buffer.from(await upstream.arrayBuffer()));
+  } catch (err) {
+    res.status(502).send(`Failed to load ${parsedUrl.hostname}: ${err.message}`);
+  }
+});
+
+// 3. Serve built React app + public/ FIRST
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// 3. Serve Ultraviolet, Libcurl, and Bare-Mux static bundles
+// 4. Serve Ultraviolet, Libcurl, and Bare-Mux static bundles
 app.use('/uv/', express.static(uvPath));
 app.use('/libcurl/', express.static(libcurlPath));
 app.use('/baremux/', express.static(baremuxPath));
 
-// 4. Prevent /uv/service/* from ever falling back to the Documents React app
+// 5. Prevent /uv/service/* from falling back to the Documents React app
 app.all('/uv/service/*', (_req, res) => {
   res.status(503).send(`
     <html>
@@ -72,7 +123,7 @@ app.all('/uv/service/*', (_req, res) => {
   `);
 });
 
-// 5. Route Wisp WebSocket connections
+// 6. Route Wisp WebSocket connections
 server.on('upgrade', (req, socket, head) => {
   if (req.url.endsWith('/wisp/')) {
     wisp.routeRequest(req, socket, head);
@@ -81,7 +132,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// 6. Fallback to React app
+// 7. Fallback to React app
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
