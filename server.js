@@ -2,6 +2,7 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { createClient } from '@supabase/supabase-js';
 import { uvPath } from '@titaniumnetwork-dev/ultraviolet';
 import { libcurlPath } from '@mercuryworkshop/libcurl-transport';
 import { baremuxPath } from '@mercuryworkshop/bare-mux/node';
@@ -13,7 +14,75 @@ const app = express();
 const server = http.createServer(app);
 const PORT = process.env.PORT || 8080;
 
-// 1. Upgraded YouTube Search API (Videos, Shorts, Channels)
+app.use(express.json());
+
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
+
+// 1. Private PDF List (proxied from private Supabase bucket)
+app.get('/api/docs', async (_req, res) => {
+  try {
+    const { data, error } = await supabase.storage.from('documents').list();
+    if (error || !data) return res.status(500).json({ files: [] });
+
+    const files = data
+      .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
+      .map((f) => ({
+        name: f.name,
+        size: f.metadata?.size || 0,
+        updatedAt: f.updated_at ? new Date(f.updated_at).toLocaleDateString() : '',
+        url: `/api/docs/${encodeURIComponent(f.name)}`,
+      }));
+
+    res.json({ files });
+  } catch (err) {
+    console.error('Docs list error:', err);
+    res.status(500).json({ files: [] });
+  }
+});
+
+// 2. Private PDF Stream (browser never sees a Supabase URL)
+app.get('/api/docs/:name', async (req, res) => {
+  const fileName = req.params.name;
+  if (!fileName || fileName.includes('..') || fileName.includes('/')) {
+    return res.status(400).send('Invalid file name');
+  }
+
+  try {
+    const { data, error } = await supabase.storage
+      .from('documents')
+      .download(fileName);
+
+    if (error || !data) return res.status(404).send('Document not found');
+
+    const buffer = Buffer.from(await data.arrayBuffer());
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Cache-Control', 'private, max-age=300');
+    res.send(buffer);
+  } catch (err) {
+    console.error('Doc stream error:', err);
+    res.status(500).send('Failed to load document');
+  }
+});
+
+// 3. Server-Side Secret Code Verification
+app.post('/api/verify', async (req, res) => {
+  const code = (req.body?.code || '').toString().trim();
+  if (!code) return res.json({ ok: false });
+
+  try {
+    const { data, error } = await supabase.rpc('verify_vault_code', {
+      input_code: code,
+    });
+    res.json({ ok: !error && data === true });
+  } catch {
+    res.json({ ok: false });
+  }
+});
+
+// 4. Upgraded YouTube Search API (Videos, Shorts, Channels)
 app.get('/api/yt/search', async (req, res) => {
   const q = (req.query.q || '').toString().trim();
   const filter = (req.query.filter || 'all').toString();
@@ -50,7 +119,7 @@ app.get('/api/yt/search', async (req, res) => {
   }
 });
 
-// 2. Fallback Server Proxy (for older Android browsers without SharedWorker)
+// 5. Fallback Server Proxy (for older Android browsers without SharedWorker)
 app.get('/proxy', async (req, res) => {
   const target = (req.query.url || '').toString().trim();
   if (!target) return res.status(400).send('Missing url');
@@ -101,15 +170,15 @@ app.get('/proxy', async (req, res) => {
   }
 });
 
-// 3. Serve built React app + public/ FIRST
+// 6. Serve built React app + public/ FIRST
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// 4. Serve Ultraviolet, Libcurl, and Bare-Mux static bundles
+// 7. Serve Ultraviolet, Libcurl, and Bare-Mux static bundles
 app.use('/uv/', express.static(uvPath));
 app.use('/libcurl/', express.static(libcurlPath));
 app.use('/baremux/', express.static(baremuxPath));
 
-// 5. Prevent /uv/service/* from falling back to the Documents React app
+// 8. Prevent /uv/service/* from falling back to the Documents React app
 app.all('/uv/service/*', (_req, res) => {
   res.status(503).send(`
     <html>
@@ -123,7 +192,7 @@ app.all('/uv/service/*', (_req, res) => {
   `);
 });
 
-// 6. Route Wisp WebSocket connections
+// 9. Route Wisp WebSocket connections
 server.on('upgrade', (req, socket, head) => {
   if (req.url.endsWith('/wisp/')) {
     wisp.routeRequest(req, socket, head);
@@ -132,7 +201,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// 7. Fallback to React app
+// 10. Fallback to React app
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
