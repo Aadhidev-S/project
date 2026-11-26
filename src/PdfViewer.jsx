@@ -7,13 +7,11 @@ import {
   ChevronRight,
   Maximize2,
   Minimize2,
-  MoreVertical,
   Search,
   ZoomIn,
   ZoomOut,
 } from 'lucide-react';
 
-// Bundles worker locally with Vite so it never fails on CDN/CORS
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorker;
 
 export default function PdfViewer({ file, onBack, onVerifyCode }) {
@@ -29,13 +27,6 @@ export default function PdfViewer({ file, onBack, onVerifyCode }) {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchStatus, setSearchStatus] = useState('');
-
-  // 3-dot menu & 3-tap version trigger
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [tapCount, setTapCount] = useState(0);
-  const [codeModalOpen, setCodeModalOpen] = useState(false);
-  const [modalCode, setModalCode] = useState('');
-  const tapTimerRef = useRef(null);
 
   // Track browser fullscreen state
   useEffect(() => {
@@ -110,7 +101,7 @@ export default function PdfViewer({ file, onBack, onVerifyCode }) {
     e.preventDefault();
     if (!searchQuery.trim()) return;
 
-    // 1. Secret check against Supabase first
+    // 1. Secret check against server first
     const unlocked = await onVerifyCode(searchQuery);
     if (unlocked) {
       setSearchQuery('');
@@ -133,28 +124,6 @@ export default function PdfViewer({ file, onBack, onVerifyCode }) {
       }
     }
     setSearchStatus('No matches');
-  }
-
-  function handleVersionTap() {
-    clearTimeout(tapTimerRef.current);
-    const next = tapCount + 1;
-    if (next >= 3) {
-      setTapCount(0);
-      setMenuOpen(false);
-      setCodeModalOpen(true);
-    } else {
-      setTapCount(next);
-      tapTimerRef.current = setTimeout(() => setTapCount(0), 2000);
-    }
-  }
-
-  async function handleModalSubmit(e) {
-    e.preventDefault();
-    const ok = await onVerifyCode(modalCode);
-    if (!ok) {
-      setModalCode('');
-      setCodeModalOpen(false);
-    }
   }
 
   return (
@@ -206,24 +175,6 @@ export default function PdfViewer({ file, onBack, onVerifyCode }) {
           >
             {isFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
           </button>
-
-          <div style={{ position: 'relative' }}>
-            <button onClick={() => setMenuOpen(!menuOpen)} style={styles.iconBtn} title="More">
-              <MoreVertical size={17} />
-            </button>
-
-            {menuOpen && (
-              <div style={styles.menu}>
-                <div style={styles.menuItem}>Page {pageNum} of {numPages || 1}</div>
-                <div
-                  onClick={handleVersionTap}
-                  style={{ ...styles.menuItem, cursor: 'pointer', color: '#888' }}
-                >
-                  Version 1.4.2
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       </header>
 
@@ -255,23 +206,6 @@ export default function PdfViewer({ file, onBack, onVerifyCode }) {
           </div>
         )}
       </main>
-
-      {/* Hidden Code Modal (from 3-tap Version) */}
-      {codeModalOpen && (
-        <div style={styles.modalBackdrop} onClick={() => setCodeModalOpen(false)}>
-          <form onSubmit={handleModalSubmit} onClick={(e) => e.stopPropagation()} style={styles.modal}>
-            <input
-              type="password"
-              autoFocus
-              placeholder="Access key"
-              value={modalCode}
-              onChange={(e) => setModalCode(e.target.value)}
-              style={styles.modalInput}
-            />
-            <button type="submit" style={styles.pillBtn}>Continue</button>
-          </form>
-        </div>
-      )}
     </div>
   );
 }
@@ -282,13 +216,8 @@ const styles = {
   searchForm: { display: 'flex', alignItems: 'center', gap: 8, background: '#1a1a1a', border: '1px solid #333', borderRadius: 999, padding: '6px 12px', flex: 1, minWidth: 180, maxWidth: 380 },
   searchInput: { background: 'transparent', border: 'none', color: '#fff', outline: 'none', width: '100%', fontSize: 13 },
   iconBtn: { background: 'transparent', border: 'none', color: '#e5e5e5', cursor: 'pointer', padding: 6, borderRadius: 6, display: 'flex', alignItems: 'center' },
-  menu: { position: 'absolute', right: 0, top: 36, background: '#161616', border: '1px solid #2a2a2a', borderRadius: 8, minWidth: 160, zIndex: 20, overflow: 'hidden' },
-  menuItem: { padding: '10px 14px', fontSize: 13, borderBottom: '1px solid #222', userSelect: 'none' },
   main: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 20, gap: 16, overflow: 'auto' },
   statusText: { marginTop: 60, fontSize: 14, color: '#888' },
   pager: { display: 'flex', alignItems: 'center', gap: 16 },
   pillBtn: { display: 'flex', alignItems: 'center', gap: 5, background: '#000', color: '#fff', border: '1px solid #333', borderRadius: 999, padding: '6px 14px', cursor: 'pointer', fontSize: 13 },
-  modalBackdrop: { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 50 },
-  modal: { background: '#111', border: '1px solid #333', borderRadius: 12, padding: 20, display: 'flex', gap: 10 },
-  modalInput: { background: '#1a1a1a', border: '1px solid #333', borderRadius: 8, padding: '8px 12px', color: '#fff', outline: 'none' },
 };
