@@ -21,6 +21,9 @@ self.addEventListener('fetch', (event) => {
     (async () => {
       if (uv.route(event)) {
         const res = await uv.fetch(event);
+        if (res.status === 204 || res.status === 205 || res.status === 304) {
+          return res;
+        }
         const headers = new Headers(res.headers);
         for (const h of BLOCKED_HEADERS) {
           headers.delete(h);
