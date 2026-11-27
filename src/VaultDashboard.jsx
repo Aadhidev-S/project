@@ -12,7 +12,7 @@ import {
 function buildTargetUrl(rawInput, useLite = false) {
   const raw = rawInput.trim();
   const defaultHome = useLite
-    ? 'https://lite.duckduckgo.com/lite/'
+    ? 'https://html.duckduckgo.com/html/?kl=us-en'
     : 'https://duckduckgo.com/?kl=us-en';
 
   if (!raw) return defaultHome;
@@ -30,7 +30,7 @@ function buildTargetUrl(rawInput, useLite = false) {
   }
 
   return useLite
-    ? `https://lite.duckduckgo.com/lite/?q=${encodeURIComponent(raw)}`
+    ? `https://html.duckduckgo.com/html/?q=${encodeURIComponent(raw)}&kl=us-en`
     : `https://duckduckgo.com/?q=${encodeURIComponent(raw)}&kl=us-en`;
 }
 
@@ -59,7 +59,7 @@ export default function VaultDashboard({ onQuickSwitch }) {
 
   // Browser state
   const iframeRef = useRef(null);
-  const [navInput, setNavInput] = useState('https://duckduckgo.com');
+  const [navInput, setNavInput] = useState('');
   const [proxyMode, setProxyMode] = useState('init'); // 'init' | 'uv' | 'fallback'
   const [proxyError, setProxyError] = useState('');
   const [frameSrc, setFrameSrc] = useState('');
@@ -74,8 +74,7 @@ export default function VaultDashboard({ onQuickSwitch }) {
       if (typeof SharedWorker === 'undefined') {
         if (cancelled) return;
         setProxyMode('fallback');
-        setNavInput('https://lite.duckduckgo.com/lite/');
-        setFrameSrc('/proxy?url=' + encodeURIComponent('https://lite.duckduckgo.com/lite/'));
+        setFrameSrc('/proxy-home');
         return;
       }
 
@@ -109,7 +108,11 @@ export default function VaultDashboard({ onQuickSwitch }) {
           window.__uv$config.encodeUrl('https://duckduckgo.com/?kl=us-en');
         setFrameSrc(startUrl);
       } catch (err) {
-        if (!cancelled) setProxyError(err?.message || 'Failed to start browser proxy.');
+        // If UV fails for any reason, drop cleanly to fallback instead of erroring
+        if (!cancelled) {
+          setProxyMode('fallback');
+          setFrameSrc('/proxy-home');
+        }
       }
     }
 
