@@ -168,9 +168,15 @@ app.get('/proxy', async (req, res) => {
 
     const contentType = upstream.headers.get('content-type') || 'text/html';
     res.setHeader('Content-Type', contentType);
+    res.removeHeader('X-Frame-Options');
+    res.removeHeader('Content-Security-Policy');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
 
     if (contentType.includes('text/html')) {
       let html = await upstream.text();
+      // Remove meta CSP tags that block framing or inline scripts
+      html = html.replace(/<meta[^>]+http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi, '');
+
       const baseTag = `<base href="${parsedUrl.origin}${parsedUrl.pathname}">`;
       const navInterceptor = `
         <script>
@@ -181,8 +187,22 @@ app.get('/proxy', async (req, res) => {
               window.location.href = '/proxy?url=' + encodeURIComponent(a.href);
             }
           }, true);
+          document.addEventListener('submit', function(e) {
+            const form = e.target;
+            if (!form || !form.action) return;
+            e.preventDefault();
+            try {
+              const targetUrl = new URL(form.action, '${parsedUrl.origin}${parsedUrl.pathname}');
+              const data = new FormData(form);
+              for (const [k, v] of data.entries()) {
+                targetUrl.searchParams.set(k, v.toString());
+              }
+              window.location.href = '/proxy?url=' + encodeURIComponent(targetUrl.toString());
+            } catch {}
+          }, true);
         </script>
       `;
+
       html = html.includes('<head>')
         ? html.replace('<head>', `<head>${baseTag}${navInterceptor}`)
         : `${baseTag}${navInterceptor}${html}`;
