@@ -27,6 +27,31 @@ function sanitizePath(rawPath) {
   return cleaned;
 }
 
+function toProxyUrl(rawUrl, base) {
+  const trimmed = (rawUrl || '').trim();
+  if (
+    !trimmed ||
+    trimmed.startsWith('#') ||
+    trimmed.startsWith('javascript:') ||
+    trimmed.startsWith('mailto:') ||
+    trimmed.startsWith('/proxy?url=')
+  ) {
+    return rawUrl;
+  }
+  try {
+    const resolved = new URL(trimmed, base);
+    if (resolved.hostname.includes('duckduckgo.com') && resolved.searchParams.has('uddg')) {
+      return `/proxy?url=${encodeURIComponent(resolved.searchParams.get('uddg'))}`;
+    }
+    if (resolved.protocol === 'http:' || resolved.protocol === 'https:') {
+      return `/proxy?url=${encodeURIComponent(resolved.href)}`;
+    }
+  } catch {
+    // Ignore malformed URLs
+  }
+  return rawUrl;
+}
+
 // 1. Private Folder & PDF List (supports nested folders via ?path=)
 app.get('/api/docs', async (req, res) => {
   const folderPath = sanitizePath(req.query.path);
@@ -186,7 +211,7 @@ app.get('/proxy-home', (_req, res) => {
   `);
 });
 
-// 6. Fallback Server Proxy (for older Android browsers without SharedWorker)
+// 6. Fallback Server Proxy (strips JS redirects & rewrites all links/forms server-side)
 app.get('/proxy', async (req, res) => {
   const target = (req.query.url || '').toString().trim();
   if (!target) return res.redirect('/proxy-home');
@@ -218,47 +243,43 @@ app.get('/proxy', async (req, res) => {
     if (contentType.includes('text/html')) {
       let html = await upstream.text();
 
-      // Strip meta CSP and meta refresh redirects that break out of /proxy
+      // 1. Strip target page scripts so frame-busters & JS redirects cannot escape /proxy
+      html = html.replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '');
+
+      // 2. Strip meta CSP and meta refresh redirects
       html = html.replace(/<meta[^>]+http-equiv=["']?(?:Content-Security-Policy|refresh)["']?[^>]*>/gi, '');
 
-      // Rewrite href="https://..." links server-side so they never escape the iframe
+      // 3. Strip target="_blank" / "_top" / "_parent"
+      html = html.replace(/\starget=(["'])[^"']*\1/gi, '');
+
+      // 4. Rewrite all <a> hrefs (absolute, relative, and //) server-side into /proxy?url=...
       html = html.replace(
-        /(<a\b[^>]*?\bhref=)(["'])(https?:\/\/[^"']+)\2/gi,
-        (_m, prefix, quote, url) => `${prefix}${quote}/proxy?url=${encodeURIComponent(url)}${quote}`
+        /(<a\b[^>]*?\bhref=)(["'])([^"']+)\2/gi,
+        (_m, prefix, quote, url) => `${prefix}${quote}${toProxyUrl(url, finalUrl.href)}${quote}`
       );
 
       const baseTag = `<base href="${finalUrl.origin}${finalUrl.pathname}">`;
-      const navInterceptor = `
+      const formInterceptor = `
         <script>
-          document.addEventListener('click', function(e) {
-            const a = e.target.closest('a');
-            if (!a) return;
-            const raw = a.getAttribute('href') || '';
-            if (raw.startsWith('/proxy?url=') || raw.startsWith('#') || raw.startsWith('javascript:')) return;
-            if (a.href && a.href.startsWith('http')) {
-              e.preventDefault();
-              window.location.href = '/proxy?url=' + encodeURIComponent(a.href);
-            }
-          }, true);
           document.addEventListener('submit', function(e) {
-            const form = e.target;
+            var form = e.target;
             if (!form) return;
             e.preventDefault();
             try {
-              const targetUrl = new URL(form.getAttribute('action') || '', '${finalUrl.href}');
-              const data = new FormData(form);
-              for (const [k, v] of data.entries()) {
+              var targetUrl = new URL(form.getAttribute('action') || '', '${finalUrl.href}');
+              var data = new FormData(form);
+              data.forEach(function(v, k) {
                 targetUrl.searchParams.set(k, v.toString());
-              }
+              });
               window.location.href = '/proxy?url=' + encodeURIComponent(targetUrl.toString());
-            } catch {}
+            } catch (err) {}
           }, true);
         </script>
       `;
 
       html = html.includes('<head>')
-        ? html.replace('<head>', `<head>${baseTag}${navInterceptor}`)
-        : `${baseTag}${navInterceptor}${html}`;
+        ? html.replace('<head>', `<head>${baseTag}${formInterceptor}`)
+        : `${baseTag}${formInterceptor}${html}`;
       return res.send(html);
     }
 
