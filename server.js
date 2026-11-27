@@ -144,10 +144,52 @@ app.get('/api/yt/search', async (req, res) => {
   }
 });
 
-// 5. Fallback Server Proxy (for older Android browsers without SharedWorker)
+// 5. Local Start Page for Fallback Mode (never blocked)
+app.get('/proxy-home', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html');
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <style>
+          body { margin: 0; background: #0a0a0a; color: #f5f5f5; font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; min-height: 100vh; padding: 20px; box-sizing: border-box; }
+          .box { width: 100%; max-width: 460px; text-align: center; }
+          h2 { font-weight: 500; font-size: 18px; margin-bottom: 16px; color: #ccc; }
+          form { display: flex; gap: 8px; }
+          input { flex: 1; background: #161616; border: 1px solid #333; border-radius: 999px; padding: 10px 16px; color: #fff; font-size: 15px; outline: none; }
+          button { background: #fff; color: #000; border: none; border-radius: 999px; padding: 10px 18px; font-weight: 600; cursor: pointer; }
+        </style>
+      </head>
+      <body>
+        <div class="box">
+          <h2>Private Search</h2>
+          <form onsubmit="go(event)">
+            <input id="q" type="text" placeholder="Search or enter URL..." autofocus />
+            <button type="submit">Go</button>
+          </form>
+        </div>
+        <script>
+          function go(e) {
+            e.preventDefault();
+            var v = document.getElementById('q').value.trim();
+            if (!v) return;
+            var isUrl = /^https?:\\/\\//i.test(v) || (v.indexOf('.') !== -1 && v.indexOf(' ') === -1);
+            var target = isUrl
+              ? (v.indexOf('http') === 0 ? v : 'https://' + v)
+              : 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(v) + '&kl=us-en';
+            window.location.href = '/proxy?url=' + encodeURIComponent(target);
+          }
+        </script>
+      </body>
+    </html>
+  `);
+});
+
+// 6. Fallback Server Proxy (for older Android browsers without SharedWorker)
 app.get('/proxy', async (req, res) => {
   const target = (req.query.url || '').toString().trim();
-  if (!target) return res.status(400).send('Missing url');
+  if (!target) return res.redirect('/proxy-home');
 
   let parsedUrl;
   try {
@@ -166,33 +208,44 @@ app.get('/proxy', async (req, res) => {
       redirect: 'follow',
     });
 
+    const finalUrl = new URL(upstream.url || parsedUrl.toString());
     const contentType = upstream.headers.get('content-type') || 'text/html';
     res.setHeader('Content-Type', contentType);
     res.removeHeader('X-Frame-Options');
     res.removeHeader('Content-Security-Policy');
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
 
     if (contentType.includes('text/html')) {
       let html = await upstream.text();
-      // Remove meta CSP tags that block framing or inline scripts
-      html = html.replace(/<meta[^>]+http-equiv=["']?Content-Security-Policy["']?[^>]*>/gi, '');
 
-      const baseTag = `<base href="${parsedUrl.origin}${parsedUrl.pathname}">`;
+      // Strip meta CSP and meta refresh redirects that break out of /proxy
+      html = html.replace(/<meta[^>]+http-equiv=["']?(?:Content-Security-Policy|refresh)["']?[^>]*>/gi, '');
+
+      // Rewrite href="https://..." links server-side so they never escape the iframe
+      html = html.replace(
+        /(<a\b[^>]*?\bhref=)(["'])(https?:\/\/[^"']+)\2/gi,
+        (_m, prefix, quote, url) => `${prefix}${quote}/proxy?url=${encodeURIComponent(url)}${quote}`
+      );
+
+      const baseTag = `<base href="${finalUrl.origin}${finalUrl.pathname}">`;
       const navInterceptor = `
         <script>
           document.addEventListener('click', function(e) {
             const a = e.target.closest('a');
-            if (a && a.href && a.href.startsWith('http')) {
+            if (!a) return;
+            const raw = a.getAttribute('href') || '';
+            if (raw.startsWith('/proxy?url=') || raw.startsWith('#') || raw.startsWith('javascript:')) return;
+            if (a.href && a.href.startsWith('http')) {
               e.preventDefault();
               window.location.href = '/proxy?url=' + encodeURIComponent(a.href);
             }
           }, true);
           document.addEventListener('submit', function(e) {
             const form = e.target;
-            if (!form || !form.action) return;
+            if (!form) return;
             e.preventDefault();
             try {
-              const targetUrl = new URL(form.action, '${parsedUrl.origin}${parsedUrl.pathname}');
+              const targetUrl = new URL(form.getAttribute('action') || '', '${finalUrl.href}');
               const data = new FormData(form);
               for (const [k, v] of data.entries()) {
                 targetUrl.searchParams.set(k, v.toString());
@@ -215,15 +268,15 @@ app.get('/proxy', async (req, res) => {
   }
 });
 
-// 6. Serve built React app + public/ FIRST
+// 7. Serve built React app + public/ FIRST
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// 7. Serve Ultraviolet, Libcurl, and Bare-Mux static bundles
+// 8. Serve Ultraviolet, Libcurl, and Bare-Mux static bundles
 app.use('/uv/', express.static(uvPath));
 app.use('/libcurl/', express.static(libcurlPath));
 app.use('/baremux/', express.static(baremuxPath));
 
-// 8. Prevent /uv/service/* from falling back to the Documents React app
+// 9. Prevent /uv/service/* from falling back to the Documents React app
 app.all('/uv/service/*', (_req, res) => {
   res.status(503).send(`
     <html>
@@ -237,7 +290,7 @@ app.all('/uv/service/*', (_req, res) => {
   `);
 });
 
-// 9. Route Wisp WebSocket connections
+// 10. Route Wisp WebSocket connections
 server.on('upgrade', (req, socket, head) => {
   if (req.url.endsWith('/wisp/')) {
     wisp.routeRequest(req, socket, head);
@@ -246,7 +299,7 @@ server.on('upgrade', (req, socket, head) => {
   }
 });
 
-// 10. Fallback to React app
+// 11. Fallback to React app
 app.get('*', (_req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
